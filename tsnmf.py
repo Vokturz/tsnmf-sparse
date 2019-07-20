@@ -1,91 +1,11 @@
 import numpy as np
-from scipy.sparse as sp
-
-class TSNMF:
-    r"""
-    Parameters
-    ----------
-    n_components: int or None
-        Number of components (topics)
-    
-    init = None | 'random' | 'nndsvd'
-        Method used to initialize the procedure
-        Defaul: None.
-        Valid options:
-
-        - None: 'nndsvd' if n_components <= min(n_samples, n_features),
-            otherwise random.
-        - 'random': non-negative random matrices, scaled with:
-            sqrt(X.mean() / n_components)
-        - 'nndsvd': Nonnegative Double Singular Value Decomposition (NNDSVD)
-            initialization (better for sparseness)
-
-    tol : float, default: 1e-4
-        Tolerance of the stopping condition.
-
-    max_iter : integer, default: 200
-        Maximum number of iterations before timing out.
-
-    random_state : int, RandomState instance or None, optional, default: None
-        If int, random_state is the seed used by the random number generator;
-        If RandomState instance, random_state is the random number generator;
-        If None, the random number generator is the RandomState instance used
-        by `np.random`.
-
-    verbose : bool, default=False
-        Whether to be verbose.
-    """
-    def __init__(self, n_components=None, init=None, tol=1e-4,
-                 max_iter=200, random_state=None, verbose=0):
-        
-        self.n_components = n_components
-        self.init = init
-        self.tol = tol
-        self.max_iter = max_iter
-        self.random_state = random_state
-        self.verbose = verbose
-
-
-    def fit_transform(self, X, y=None, W=None, H=None):
-        return
-    
-def topic_supervised_factorization(X, W=None, H=None, n_components=None,
-                                    init=None, update_H=True, tol=1e-4,
-                                    max_iter=200, regularization=None,
-                                    random_state=None, verbose=0):
-    r"""
-        update_H : boolean, default: True
-            Set to True, both W and H will be estimated from initial guesses.
-            Set to False, only W will be estimated.
-
-        rgularization : 'both' | 'components' | 'transformation' | None
-            Select whether the regularization affects the components (H), the
-            transformation (W), both or none of them.
-    """
-
-    #X = check_array(X, accept_sparse=('csr','csc'), dtype=float) # from utils
-    #check_non_negative(X, "TSNMF (input X)") # from utils.validation
-    
-    n_samples, n_features = X.shape
-    if n_components is None:
-        n_components = n_features
-
-    #Validation from NMF sklearn source code
-    if not isinstance(n_components, INTEGER_TYPES) or n_components <= 0:
-        raise ValueError("Number of components must be a positive integer;"
-                         " got (n_components=%r)" % n_components)
-    if not isinstance(max_iter, INTEGER_TYPES) or max_iter < 0:
-        raise ValueError("Maximum number of iterations must be a positive "
-                         "integer; got (max_iter=%r)" % max_iter)
-    if not isinstance(tol, numbers.Number) or tol < 0:
-        raise ValueError("Tolerance for stopping criteria must be "
-                         "positive; got (tol=%r)" % tol)
-
-    W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
-
+import scipy.sparse as sp
+from math import sqrt
+import numbers
+INTEGER_TYPES = (numbers.Integral, np.integer)
 
 def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
-    r"""
+    """
     Initialization of matrices W and H (X = WH)
 
     Returns
@@ -169,3 +89,103 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
             (init, (None, 'random', 'nndsvd',)))
 
     return W, H
+
+def norm(x):
+    """Dot product-based Euclidean norm implementation
+    See: http://fseoane.net/blog/2011/computing-the-vector-norm/
+    Parameters
+    ----------
+    x : array-like
+        Vector for which to compute the norm
+    """
+    return sqrt(squared_norm(x))
+
+class TSNMF:
+    """
+    Parameters
+    ----------
+    n_components: int or None
+        Number of components (topics)
+    
+    init = None | 'random' | 'nndsvd'
+        Method used to initialize the procedure
+        Defaul: None.
+        Valid options:
+
+        - None: 'nndsvd' if n_components <= min(n_samples, n_features),
+            otherwise random.
+        - 'random': non-negative random matrices, scaled with:
+            sqrt(X.mean() / n_components)
+        - 'nndsvd': Nonnegative Double Singular Value Decomposition (NNDSVD)
+            initialization (better for sparseness)
+
+    tol : float, default: 1e-4
+        Tolerance of the stopping condition.
+
+    max_iter : integer, default: 200
+        Maximum number of iterations before timing out.
+
+    random_state : int, RandomState instance or None, optional, default: None
+        If int, random_state is the seed used by the random number generator;
+        If RandomState instance, random_state is the random number generator;
+        If None, the random number generator is the RandomState instance used
+        by `np.random`.
+
+    verbose : bool, default=False
+        Whether to be verbose.
+    """
+    def __init__(self, n_components=None, init=None, tol=1e-4,
+                 max_iter=200, random_state=None, verbose=0):
+        
+        self.n_components = n_components
+        self.init = init
+        self.tol = tol
+        self.max_iter = max_iter
+        self.random_state = random_state
+        self.verbose = verbose
+
+
+    def fit_transform(self, X, y=None, W=None, H=None):
+        return
+    
+def topic_supervised_factorization(X, W=None, H=None, n_components=None,
+                                    init=None, update_H=True, tol=1e-4,
+                                    max_iter=200, regularization=None,
+                                    random_state=None, verbose=0):
+    """
+        update_H : boolean, default: True
+            Set to True, both W and H will be estimated from initial guesses.
+            Set to False, only W will be estimated.
+
+        rgularization : 'both' | 'components' | 'transformation' | None
+            Select whether the regularization affects the components (H), the
+            transformation (W), both or none of them.
+    """
+
+    #X = check_array(X, accept_sparse=('csr','csc'), dtype=float) # from utils
+    #check_non_negative(X, "TSNMF (input X)") # from utils.validation
+    
+    n_samples, n_features = X.shape
+    if n_components is None:
+        n_components = n_features
+
+    #Validation from NMF sklearn source code
+    if not isinstance(n_components, INTEGER_TYPES) or n_components <= 0:
+        raise ValueError("Number of components must be a positive integer;"
+                         " got (n_components=%r)" % n_components)
+    if not isinstance(max_iter, INTEGER_TYPES) or max_iter < 0:
+        raise ValueError("Maximum number of iterations must be a positive "
+                         "integer; got (max_iter=%r)" % max_iter)
+    if not isinstance(tol, numbers.Number) or tol < 0:
+        raise ValueError("Tolerance for stopping criteria must be "
+                         "positive; got (tol=%r)" % tol)
+
+    W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
+
+    W, H, n_iter = _fit_multiplicative_update(X, W, H, max_iter, tol,
+                                                update_H, verbose)
+
+
+def _fit_multiplicative_update(X, W, H, max_iter=200, tol=1e-4, update_H=True,
+                                verbose=0):
+    return W, H, n_iter
