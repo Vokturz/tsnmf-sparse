@@ -104,6 +104,15 @@ def norm(x):
     """
     return sqrt(squared_norm(x))
 
+def _check_init(A, shape, whom):
+    A = check_array(A)
+    if np.shape(A) != shape:
+        raise ValueError('Array with wrong shape passed to %s. Expected %s, '
+                         'but got %s ' % (whom, shape, np.shape(A)))
+    check_non_negative(A, whom)
+    if np.max(A) == 0:
+        raise ValueError('Array passed to %s is full of zeros.' % whom)
+      
 class TSNMF:
     """
     Parameters
@@ -153,8 +162,8 @@ class TSNMF:
         return
     
 def topic_supervised_factorization(X, W=None, H=None, n_components=None,
-                                    init=None, update_H=True, tol=1e-4,
-                                    max_iter=200, regularization=None,
+                                    labels=None, init=None, update_H=True,
+                                    tol=1e-4, max_iter=200, regularization=None,
                                     random_state=None, verbose=0):
     """
         update_H : boolean, default: True
@@ -184,12 +193,85 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
         raise ValueError("Tolerance for stopping criteria must be "
                          "positive; got (tol=%r)" % tol)
 
-    W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
+    # labels will be list
+    if not isinstance(labels, list):
+        raise ValueError()
 
-    W, H, n_iter = _fit_multiplicative_update(X, W, H, max_iter, tol,
+    if not update_H:
+        _check_init(H, (n_components, n_features), "NMF (input H)")
+        # 'mu' solver should not be initialized by zeros
+        avg = np.sqrt(X.mean() / n_components)
+        W = np.full((n_samples, n_components), avg)
+    else:
+        W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
+
+    L = something_from_labels(labels)
+    W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
                                                 update_H, verbose)
 
 
-def _fit_multiplicative_update(X, W, H, max_iter=200, tol=1e-4, update_H=True,
-                                verbose=0):
+def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
+                                update_H=True, verbose=0):
+    
+    #error_at_init = error
+
+    HHt, XHt, = None, None
+    for n_iter in range(1,max_iter + 1):
+        # update W
+        delta_W, HHt, XHt= _multiplicative_update_w(
+                            X, W, H, L, HHt, XHt, update_H)
+        W *= delta_W
+
+        # update H
+        if update_H:
+            delta_H = _multiplicative_update_h(X, W, H, L)
+            H *= delta_H
+
+            HHt, XHt = None, None
+
+        #if tol > 0 and n_iter % 10 == 0:
+            #if previous_error - error) / error_at_init < tol:
+                #break
+
     return W, H, n_iter
+def _multiplicative_update_w(X, W, H, L,  HHt=None,
+                            XHt=None, update_H=True):
+
+    # assuming Frobenius norm
+    # Numerator
+    if XHt is None:
+        XHt = safe_sparse_dot(X, H.T)
+    if update_H:
+        numerator = XHt
+    else:
+        numerator = XHt.copy()
+    numerator = numerator.multiply(L)
+
+    # Denominator
+    if HHt is None:
+        HHt = safe_sparse_dot(H, H.t)
+    WoL = W.multiply(L)
+    denominator = safe_sparse_dot(WoL, HHt)
+    denominator = denominator.multiply(L)
+
+    numerator /= denominator
+    delta_W = numerator
+
+    return delta_W, HHt, XHt
+
+def _multiplicative_update_h(X, W, H, L):
+
+    # Assuming Frobenius norm
+
+    # Numerator
+    WoL = W.multiply(L)
+    numerator = safe_sparse_dot(WoL.T, X)
+
+    # Denominator
+    WoLH = safe_sparse_dot(WoL,H)
+    denominator = safe_sparse_dot(WoL.T,WoLH)
+
+    numerator /= denominator
+    delta_H = numerator
+
+    return delta_H
