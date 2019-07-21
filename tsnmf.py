@@ -2,6 +2,10 @@ import numpy as np
 import scipy.sparse as sp
 from math import sqrt
 import numbers
+from sklearn.utils import check_random_state, check_array
+from sklearn.utils.extmath import randomized_svd, safe_sparse_dot, squared_norm
+from sklearn.utils.validation import check_non_negative
+
 INTEGER_TYPES = (numbers.Integral, np.integer)
 
 def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
@@ -16,7 +20,7 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
         Initial guesses for solving X ~= WH
     """
 
-    #check_non_negative(X, "TSNMF initialization") # from utils.validation
+    check_non_negative(X, "TSNMF initialization")
     n_samples, n_features = X.shape
     if (init is not None and init != 'random'
             and n_components > min(n_samples, n_features)):
@@ -32,7 +36,7 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
    
     if init == 'random':
         avg = np.sqrt(X.mean() / n_components)
-        rng = check_random_state(random_state) # from utils
+        rng = check_random_state(random_state)
         H = avg * rng.randn(n_components, n_features)
         W = avg * rng.randn(n_samples, n_components)
         # we do not write np.abs(H, out=H) to stay compatible with
@@ -43,7 +47,7 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
         return W, H
 
     # NNDSVD initialization
-    U, S, V = randomized_svd(X, n_components, random_state=random_state) # from utils.extmath
+    U, S, V = randomized_svd(X, n_components, random_state=random_state)
     W, H = np.zeros(U.shape), np.zeros(V.shape)
 
     # The leading singular triplet is non-negative
@@ -162,8 +166,8 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
             transformation (W), both or none of them.
     """
 
-    #X = check_array(X, accept_sparse=('csr','csc'), dtype=float) # from utils
-    #check_non_negative(X, "TSNMF (input X)") # from utils.validation
+    X = check_array(X, accept_sparse=('csr','csc'), dtype=float) # from utils
+    check_non_negative(X, "TSNMF (input X)") # from utils.validation
     
     n_samples, n_features = X.shape
     if n_components is None:
