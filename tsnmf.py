@@ -44,7 +44,7 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
         # supported as a kwarg on ufuncs
         np.abs(H, H)
         np.abs(W, W)
-        return W, H
+        return sp.csr_matrix(W), sp.csr_matrix(H)
 
     # NNDSVD initialization
     U, S, V = randomized_svd(X, n_components, random_state=random_state)
@@ -92,7 +92,19 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
             'Invalid init parameter: got %r instead of one of %r' %
             (init, (None, 'random', 'nndsvd',)))
 
-    return W, H
+    return sp.csr_matrix(W), sp.csr_matrix(H)
+
+
+def create_constraint_matrix(labels, n_components):
+    L = np.ones((len(labels), n_components)) * 1  # initialize matrix of ones
+
+    for document_index, topic_index_list in enumerate(labels):
+        if len(topic_index_list) > 0:  # if document has been labeled
+            L[document_index, :] = 0  # set all labels to zero for that doc initially
+
+            for topic_index in topic_index_list:
+                L[document_index, topic_index] = 1  # set labeled topic / document to 1
+    return sp.csr_matrix(L)
 
 def norm(x):
     """Dot product-based Euclidean norm implementation
@@ -157,9 +169,30 @@ class TSNMF:
         self.random_state = random_state
         self.verbose = verbose
 
+    def fit(self, X, labels, y=None, **params):
+        """Learn a NMF model for the data X.
+        Parameters
+        ----------
+        X : {array-like, sparse matrix}, shape (n_samples, n_features)
+            Data matrix to be decomposed
+        y : Ignored
+        Returns
+        -------
+        self
+        """
+        self.fit_transform(X, labels,**params)
+        return self
 
-    def fit_transform(self, X, y=None, W=None, H=None):
-        return
+    def fit_transform(self, X, labels, y=None, W=None, H=None):
+        X = check_array(X, accept_sparse=('csr', 'csc'), dtype=float)
+        W, H, n_iter = topic_supervised_factorization(X, W, H,self.n_components, labels, init =self.init,
+                                        tol=self.tol, max_iter=self.max_iter, verbose=self.verbose)
+                                        
+        self.n_components_ = H.shape[0]
+        self.components_ = H
+        self.n_iter_ = n_iter
+        return W
+
     
 def topic_supervised_factorization(X, W=None, H=None, n_components=None,
                                     labels=None, init=None, update_H=True,
@@ -170,7 +203,7 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
             Set to True, both W and H will be estimated from initial guesses.
             Set to False, only W will be estimated.
 
-        rgularization : 'both' | 'components' | 'transformation' | None
+        regularization : 'both' | 'components' | 'transformation' | None
             Select whether the regularization affects the components (H), the
             transformation (W), both or none of them.
     """
@@ -204,43 +237,51 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
         W = np.full((n_samples, n_components), avg)
     else:
         W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
-
-    L = something_from_labels(labels)
+    L = create_constraint_matrix(labels, n_components)
     W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
                                                 update_H, verbose)
-
+    return W, H, n_iter
 
 def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
                                 update_H=True, verbose=0):
     
-    #error_at_init = error
-
+    error_at_init = _beta_divergence(X, W, H, L, square_root=True)
+    previous_error = error_at_init
     HHt, XHt, = None, None
     for n_iter in range(1,max_iter + 1):
         # update W
         delta_W, HHt, XHt= _multiplicative_update_w(
                             X, W, H, L, HHt, XHt, update_H)
-        W *= delta_W
+        W = W.multiply(delta_W)
 
         # update H
         if update_H:
             delta_H = _multiplicative_update_h(X, W, H, L)
-            H *= delta_H
+            H = H.multiply(delta_H)
 
             HHt, XHt = None, None
 
-        #if tol > 0 and n_iter % 10 == 0:
-            #if previous_error - error) / error_at_init < tol:
-                #break
+        if tol > 0: #and n_iter % 10 == 0:
+            error = _beta_divergence(X, W, H, L, square_root=True)
+
+            #if verbose:
+            #    iter_time = time.time()
+            #    print("Epoch %02d reached after %.3f seconds, error: %f" %
+            #          (n_iter, iter_time - start_time, error))
+
+            if (previous_error - error) / error_at_init < tol:
+                break
+            previous_error = error
 
     return W, H, n_iter
+
 def _multiplicative_update_w(X, W, H, L,  HHt=None,
                             XHt=None, update_H=True):
 
     # assuming Frobenius norm
     # Numerator
     if XHt is None:
-        XHt = safe_sparse_dot(X, H.T)
+        XHt = X.dot(H.T)
     if update_H:
         numerator = XHt
     else:
@@ -248,15 +289,14 @@ def _multiplicative_update_w(X, W, H, L,  HHt=None,
     numerator = numerator.multiply(L)
 
     # Denominator
-    if HHt is None:
-        HHt = safe_sparse_dot(H, H.t)
+    #if HHt is None:
+    #    HHt = H.dot(H.T)
     WoL = W.multiply(L)
-    denominator = safe_sparse_dot(WoL, HHt)
+    denominator = WoL.dot(H).dot(H.T)
     denominator = denominator.multiply(L)
-
     numerator /= denominator
-    delta_W = numerator
-
+    # numerator.data /= np.array(denominator[numerator.nonzero()])[0]
+    delta_W = sp.csr_matrix(np.nan_to_num(numerator))
     return delta_W, HHt, XHt
 
 def _multiplicative_update_h(X, W, H, L):
@@ -265,13 +305,23 @@ def _multiplicative_update_h(X, W, H, L):
 
     # Numerator
     WoL = W.multiply(L)
-    numerator = safe_sparse_dot(WoL.T, X)
+    numerator = (WoL.T).dot(X)
 
     # Denominator
-    WoLH = safe_sparse_dot(WoL,H)
-    denominator = safe_sparse_dot(WoL.T,WoLH)
-
+    WoLH = WoL.dot(H)
+    denominator = (WoL.T).dot(WoLH)
     numerator /= denominator
-    delta_H = numerator
+    # numerator.data /= np.array(denominator[numerator.nonzero()])[0]
+    
+    delta_H = sp.csr_matrix(np.nan_to_num(numerator))
 
     return delta_H
+
+def _beta_divergence(X, W, H, L, square_root=False):
+        #print(X.data)
+        #print(W.data)
+        #print(H.data)
+        #print(L.data)
+        sse = sp.linalg.norm(X - (W.multiply(L))*H)
+        mse = sse / (X.shape[0] * X.shape[1])
+        return mse
