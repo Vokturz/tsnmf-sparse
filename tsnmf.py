@@ -6,6 +6,9 @@ import time
 from sklearn.utils import check_random_state, check_array
 from sklearn.utils.extmath import randomized_svd, safe_sparse_dot, squared_norm
 from sklearn.utils.validation import check_non_negative
+#np.set_printoptions(formatter={'float_kind':'{:f}'.format})
+
+EPSILON = np.finfo(np.float32).eps
 
 INTEGER_TYPES = (numbers.Integral, np.integer)
 
@@ -257,13 +260,14 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
     else:
         W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
     L = create_constraint_matrix(labels, n_components)
-    with np.errstate(invalid='ignore'):
+    with np.errstate(invalid='ignore'): #just to ignore division by 0 and nan warnings
         W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
                                                     update_H, verbose)
     return W, H, n_iter
 
 def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
                                 update_H=True, verbose=0):
+    start_time = time.time()
     error_at_init = _beta_divergence(X, W, H, L, square_root=True)
     previous_error = error_at_init
     HHt, XHt, = None, None
@@ -272,21 +276,20 @@ def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
         delta_W, HHt, XHt= _multiplicative_update_w(
                             X, W, H, L, HHt, XHt, update_H)
         W *= delta_W
-
         # update H
         if update_H:
             delta_H = _multiplicative_update_h(X, W, H, L)
             H *= delta_H
 
             HHt, XHt = None, None
-
+        
         if tol > 0: #and n_iter % 10 == 0:
             error = _beta_divergence(X, W, H, L, square_root=True)
 
-            #if verbose:
-            #    iter_time = time.time()
-            #    print("Epoch %02d reached after %.3f seconds, error: %f" %
-            #          (n_iter, iter_time - start_time, error))
+            if verbose:
+                iter_time = time.time()
+                print("Epoch %02d reached after %.3f seconds, error: %f" %
+                      (n_iter, iter_time - start_time, error))
 
             if (previous_error - error) / error_at_init < tol:
                 break
@@ -313,9 +316,9 @@ def _multiplicative_update_w(X, W, H, L,  HHt=None,
     WoL = W*L
     denominator = np.dot(WoL,HHt)
     denominator *= L
+    denominator[denominator == 0] = EPSILON
     numerator /= denominator
-    # numerator.data /= np.array(denominator[numerator.nonzero()])[0]
-    delta_W = np.nan_to_num(numerator)
+    delta_W = numerator #np.nan_to_num(numerator)
     return delta_W, HHt, XHt
 
 def _multiplicative_update_h(X, W, H, L):
@@ -329,9 +332,9 @@ def _multiplicative_update_h(X, W, H, L):
     # Denominator
     denominator = np.dot(np.dot(WoL.T,WoL),H)
 
+    denominator[denominator == 0] = EPSILON
     numerator /= denominator
-    # numerator.data /= np.array(denominator[numerator.nonzero()])[0]
-    delta_H = np.nan_to_num(numerator)
+    delta_H = numerator
     return delta_H
 
 def _beta_divergence(X, W, H, L, square_root=False):
