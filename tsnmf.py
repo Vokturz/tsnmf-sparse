@@ -2,6 +2,7 @@ import numpy as np
 import scipy.sparse as sp
 from math import sqrt
 import numbers
+import time
 from sklearn.utils import check_random_state, check_array
 from sklearn.utils.extmath import randomized_svd, safe_sparse_dot, squared_norm
 from sklearn.utils.validation import check_non_negative
@@ -44,7 +45,7 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
         # supported as a kwarg on ufuncs
         np.abs(H, H)
         np.abs(W, W)
-        return sp.csr_matrix(W), sp.csr_matrix(H)
+        return W, H
 
     # NNDSVD initialization
     U, S, V = randomized_svd(X, n_components, random_state=random_state)
@@ -92,7 +93,7 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
             'Invalid init parameter: got %r instead of one of %r' %
             (init, (None, 'random', 'nndsvd',)))
 
-    return sp.csr_matrix(W), sp.csr_matrix(H)
+    return W, H
 
 
 def create_constraint_matrix(labels, n_components):
@@ -104,7 +105,7 @@ def create_constraint_matrix(labels, n_components):
 
             for topic_index in topic_index_list:
                 L[document_index, topic_index] = 1  # set labeled topic / document to 1
-    return sp.csr_matrix(L)
+    return L
 
 def norm(x):
     """Dot product-based Euclidean norm implementation
@@ -124,7 +125,18 @@ def _check_init(A, shape, whom):
     check_non_negative(A, whom)
     if np.max(A) == 0:
         raise ValueError('Array passed to %s is full of zeros.' % whom)
-      
+
+def trace_dot(X, Y):
+    """Trace of np.dot(X, Y.T).
+    Parameters
+    ----------
+    X : array-like
+        First matrix
+    Y : array-like
+        Second matrix
+    """
+    return np.dot(X.ravel(), Y.ravel())
+
 class TSNMF:
     """
     Parameters
@@ -193,6 +205,12 @@ class TSNMF:
         self.n_iter_ = n_iter
         return W
 
+    def transform(self, X, labels):
+        W, H, n_iter = topic_supervised_factorization(X, W=None, H=self.components_,
+                                    n_components = self.n_components_, labels= labels, init =self.init,
+                                        update_H=False,tol=self.tol, max_iter=self.max_iter, verbose=self.verbose)
+        return W        
+
     
 def topic_supervised_factorization(X, W=None, H=None, n_components=None,
                                     labels=None, init=None, update_H=True,
@@ -235,16 +253,17 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
         # 'mu' solver should not be initialized by zeros
         avg = np.sqrt(X.mean() / n_components)
         W = np.full((n_samples, n_components), avg)
+        W = W
     else:
         W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
     L = create_constraint_matrix(labels, n_components)
-    W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
-                                                update_H, verbose)
+    with np.errstate(invalid='ignore'):
+        W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
+                                                    update_H, verbose)
     return W, H, n_iter
 
 def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
                                 update_H=True, verbose=0):
-    
     error_at_init = _beta_divergence(X, W, H, L, square_root=True)
     previous_error = error_at_init
     HHt, XHt, = None, None
@@ -252,12 +271,12 @@ def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
         # update W
         delta_W, HHt, XHt= _multiplicative_update_w(
                             X, W, H, L, HHt, XHt, update_H)
-        W = W.multiply(delta_W)
+        W *= delta_W
 
         # update H
         if update_H:
             delta_H = _multiplicative_update_h(X, W, H, L)
-            H = H.multiply(delta_H)
+            H *= delta_H
 
             HHt, XHt = None, None
 
@@ -281,22 +300,22 @@ def _multiplicative_update_w(X, W, H, L,  HHt=None,
     # assuming Frobenius norm
     # Numerator
     if XHt is None:
-        XHt = X.dot(H.T)
+        XHt = safe_sparse_dot(X,H.T)
     if update_H:
         numerator = XHt
     else:
         numerator = XHt.copy()
-    numerator = numerator.multiply(L)
+    numerator *= L
 
     # Denominator
-    #if HHt is None:
-    #    HHt = H.dot(H.T)
-    WoL = W.multiply(L)
-    denominator = WoL.dot(H).dot(H.T)
-    denominator = denominator.multiply(L)
+    if HHt is None:
+        HHt = np.dot(H,H.T)
+    WoL = W*L
+    denominator = np.dot(WoL,HHt)
+    denominator *= L
     numerator /= denominator
     # numerator.data /= np.array(denominator[numerator.nonzero()])[0]
-    delta_W = sp.csr_matrix(np.nan_to_num(numerator))
+    delta_W = np.nan_to_num(numerator)
     return delta_W, HHt, XHt
 
 def _multiplicative_update_h(X, W, H, L):
@@ -304,24 +323,35 @@ def _multiplicative_update_h(X, W, H, L):
     # Assuming Frobenius norm
 
     # Numerator
-    WoL = W.multiply(L)
-    numerator = (WoL.T).dot(X)
+    WoL = W*L
+    numerator = safe_sparse_dot(WoL.T,X)
 
     # Denominator
-    WoLH = WoL.dot(H)
-    denominator = (WoL.T).dot(WoLH)
+    denominator = np.dot(np.dot(WoL.T,WoL),H)
+
     numerator /= denominator
     # numerator.data /= np.array(denominator[numerator.nonzero()])[0]
-    
-    delta_H = sp.csr_matrix(np.nan_to_num(numerator))
-
+    delta_H = np.nan_to_num(numerator)
     return delta_H
 
 def _beta_divergence(X, W, H, L, square_root=False):
-        #print(X.data)
-        #print(W.data)
-        #print(H.data)
-        #print(L.data)
-        sse = sp.linalg.norm(X - (W.multiply(L))*H)
-        mse = sse / (X.shape[0] * X.shape[1])
-        return mse
+    if not sp.issparse(X):
+        X = np.atleast_2d(X)
+    W = np.atleast_2d(W)
+    H = np.atleast_2d(H)
+
+    # Avoid the creation of the dense np.dot(W, H) if X is sparse.
+    if sp.issparse(X):
+        norm_X = np.dot(X.data, X.data)
+        WoL = W*L
+        norm_WoLH = trace_dot(np.dot(np.dot(WoL.T,WoL),H),H)
+        cross_prod = trace_dot((X * H.T), WoL)
+        res = (norm_X + norm_WoLH - 2. * cross_prod) / 2
+    else:
+        WoL = W*L
+        res = squared_norm(X- np.dot(WoL,H)) / 2
+    
+    if square_root:
+        return np.sqrt(res * 2)
+    else:
+        return res
