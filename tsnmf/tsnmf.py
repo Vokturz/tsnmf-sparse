@@ -260,6 +260,10 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
     else:
         W, H = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
     L = create_constraint_matrix(labels, n_components)
+
+    if init == 'nndsvd':
+        W[(L == 1) & (W == 0)] = W.mean()
+
     with np.errstate(invalid='ignore'): #just to ignore division by 0 and nan warnings
         W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
                                                     update_H, verbose)
