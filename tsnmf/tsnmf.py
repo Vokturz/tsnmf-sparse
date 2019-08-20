@@ -260,11 +260,14 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
         W_init, H_init = _initialize_tsnmf(X, n_components, init=init, random_state=random_state)
 
         # override W or H if supplied
-        if W is None:
+        if W is not None:
             _check_init(W, (n_features, n_components), "NMF (input W)")
+        else:
             W = W_init
-        if H is None:
+
+        if H is not None:
             _check_init(H, (n_components, n_features), "NMF (input H)")
+        else:
             H = H_init
 
     L = create_constraint_matrix(labels, n_components)
