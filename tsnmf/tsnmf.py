@@ -6,7 +6,6 @@ import time
 from sklearn.utils import check_random_state, check_array
 from sklearn.utils.extmath import randomized_svd, safe_sparse_dot, squared_norm
 from sklearn.utils.validation import check_non_negative
-#np.set_printoptions(formatter={'float_kind':'{:f}'.format})
 
 EPSILON = np.finfo(np.float32).eps
 
@@ -100,6 +99,22 @@ def _initialize_tsnmf(X, n_components, init=None, eps=1e-6, random_state=None):
 
 
 def create_constraint_matrix(labels, n_components):
+    """Create the supervision matrix L from labels. It uses the same code from
+    https://github.com/kelsey-macmillan/ws-nmf/blob/master/src/model/ws_nmf.py
+
+    Parameters
+    ----------
+    labels : list of list
+        The order of the sublists should match the order of the docs from X,
+        and each sublist is a list of topic id tags
+    n_components: int
+        Number of components (topics)
+    
+    Returns
+    ---------
+    L : array-like, shape (n_samples, n_components)
+        Supervision matrix, constrains the importance weights from W.
+    """
     L = np.ones((len(labels), n_components)) * 1  # initialize matrix of ones
 
     for document_index, topic_index_list in enumerate(labels):
@@ -121,6 +136,9 @@ def norm(x):
     return sqrt(squared_norm(x))
 
 def _check_init(A, shape, whom):
+    """Check initialization of A.
+    Method copied from scikit-learn NMF source code
+    """
     A = check_array(A)
     if np.shape(A) != shape:
         raise ValueError('Array with wrong shape passed to %s. Expected %s, '
@@ -190,6 +208,9 @@ class TSNMF:
         ----------
         X : {array-like, sparse matrix}, shape (n_samples, n_features)
             Data matrix to be decomposed
+        labels : list of list
+            The order of the sublists should match the order of the docs from X,
+            and each sublist is a list of topic id tags
         y : Ignored
         Returns
         -------
@@ -199,9 +220,29 @@ class TSNMF:
         return self
 
     def fit_transform(self, X, labels, y=None, W=None, H=None):
+        """Learn a TSNMF model for the data X and returns the transformed data.
+        This is more efficient than calling fit followed by transform.
+        Parameters
+        ----------
+        X : {array-like, sparse matrix}, shape (n_samples, n_features)
+            Data matrix to be decomposed
+        labels : list of list
+            The order of the sublists should match the order of the docs from X,
+            and each sublist is a list of topic id tags
+        y : Ignored
+        W : array-like, shape (n_samples, n_components)
+            If init='custom', it is used as initial guess for the solution.
+        H : array-like, shape (n_components, n_features)
+            If init='custom', it is used as initial guess for the solution.
+        Returns
+        -------
+        W : array, shape (n_samples, n_components)
+            Transformed data.
+        """
         X = check_array(X, accept_sparse=('csr', 'csc'), dtype=float)
-        W, H, n_iter = topic_supervised_factorization(X, W, H,self.n_components, labels, init =self.init,
-                                        tol=self.tol, max_iter=self.max_iter, verbose=self.verbose)
+        W, H, n_iter = topic_supervised_factorization(X, W, H, self.n_components,
+                                        labels, init =self.init, tol=self.tol,
+                                        max_iter=self.max_iter, verbose=self.verbose)
                                         
         self.n_components_ = H.shape[0]
         self.components_ = H
@@ -209,24 +250,86 @@ class TSNMF:
         return W
 
     def transform(self, X, labels):
+        """Transform the data X according to the fitted NMF model
+        Parameters
+        ----------
+        X : {array-like, sparse matrix}, shape (n_samples, n_features)
+            Data matrix to be transformed by the model
+        labels : list of list
+            The order of the sublists should match the order of the docs from X,
+            and each sublist is a list of topic id tags    
+        Returns
+        -------
+        W : array, shape (n_samples, n_components)
+            Transformed data
+        """
         W, H, n_iter = topic_supervised_factorization(X, W=None, H=self.components_,
-                                    n_components = self.n_components_, labels= labels, init =self.init,
-                                        update_H=False,tol=self.tol, max_iter=self.max_iter, verbose=self.verbose)
+                                    n_components = self.n_components_, labels= labels,
+                                    init =self.init, update_H=False,tol=self.tol,
+                                    max_iter=self.max_iter, verbose=self.verbose)
         return W        
 
     
 def topic_supervised_factorization(X, W=None, H=None, n_components=None,
                                     labels=None, init=None, update_H=True,
-                                    tol=1e-4, max_iter=200, regularization=None,
-                                    random_state=None, verbose=0):
-    """
-        update_H : boolean, default: True
-            Set to True, both W and H will be estimated from initial guesses.
-            Set to False, only W will be estimated.
-
-        regularization : 'both' | 'components' | 'transformation' | None
-            Select whether the regularization affects the components (H), the
-            transformation (W), both or none of them.
+                                    tol=1e-4, max_iter=200, random_state=None, 
+                                    verbose=0):
+    """Compute Topic Supervised Non-negative Matrix Factorization (TSNMF)
+    Similar to NMF, this method find two non-negative matrices (W, H) whose
+    product approximates the non-negative matrix X, where W is constrain by
+    a supervision matrix L. This factorization can be used for example for 
+    dimensionality reduction, source separation or topic extraction.
+    The objective function is::
+        ||X - Had(W,L)H||_Fro^2
+    Where::
+        ||A||_Fro^2 = \sum_{i,j} A_{ij}^2 (Frobenius norm)
+        Had(W,L) is the Hadamard (entrywise) product
+    The objective function is minimized with an alternating minimization of W
+    and H. If H is given and update_H=False, it solves for W only.
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_features)
+        Constant matrix.
+    W : array-like, shape (n_samples, n_components)
+    H : array-like, shape (n_components, n_features)
+        If update_H=False, it is used as a constant, to solve for W only.
+    n_components : integer
+        Number of components, if n_components is not set all features
+        are kept.
+    labels : list of list
+        The order of the sublists should match the order of the docs from X,
+        and each sublist is a list of topic id tags
+    init : None | 'random' | 'nndsvd'
+        Method used to initialize the procedure.
+        Default: 'random'.
+        Valid options:
+        - None: 'nndsvd' if n_components < n_features, otherwise 'random'.
+        - 'random': non-negative random matrices, scaled with:
+            sqrt(X.mean() / n_components)
+        - 'nndsvd': Nonnegative Double Singular Value Decomposition (NNDSVD)
+            initialization (better for sparseness)
+    update_H : boolean, default: True
+        Set to True, both W and H will be estimated from initial guesses.
+        Set to False, only W will be estimated.
+    tol : float, default: 1e-4
+        Tolerance of the stopping condition.
+    max_iter : integer, default: 200
+        Maximum number of iterations before timing out.
+    random_state : int, RandomState instance or None, optional, default: None
+        If int, random_state is the seed used by the random number generator;
+        If RandomState instance, random_state is the random number generator;
+        If None, the random number generator is the RandomState instance used
+        by `np.random`.
+    verbose : integer, default: 0
+        The verbosity level.
+    Returns
+    -------
+    W : array-like, shape (n_samples, n_components)
+        Solution to the non-negative least squares problem.
+    H : array-like, shape (n_components, n_features)
+        Solution to the non-negative least squares problem.
+    n_iter : int
+        Actual number of iterations.
     """
 
     X = check_array(X, accept_sparse=('csr','csc'), dtype=float) # from utils
@@ -247,10 +350,6 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
         raise ValueError("Tolerance for stopping criteria must be "
                          "positive; got (tol=%r)" % tol)
 
-    # labels will be list
-    if not isinstance(labels, list):
-        raise ValueError()
-
     if not update_H:
         _check_init(H, (n_components, n_features), "NMF (input H)")
         # 'mu' solver should not be initialized by zeros
@@ -270,18 +369,51 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
         else:
             H = H_init
 
+    # Supervision matrix
     L = create_constraint_matrix(labels, n_components)
 
     if init == 'nndsvd':
         W[(L == 1) & (W <= EPSILON)] = W.mean()
 
-    with np.errstate(invalid='ignore'): #just to ignore division by 0 and nan warnings
-        W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
+    W, H, n_iter = _fit_multiplicative_update(X, W, H, L, max_iter, tol,
                                                     update_H, verbose)
     return W, H, n_iter
 
 def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
                                 update_H=True, verbose=0):
+    """Compute Topic Supervised Non-negative Matrix Factorization 
+    with Multiplicative Update
+    The objective function is _beta_divergence(X, WH) and is minimized with an
+    alternating minimization of W and H. Each minimization is done with a
+    Multiplicative Update.
+    Parameters
+    ----------
+    X : array-like, shape (n_samples, n_features)
+        Constant input matrix.
+    W : array-like, shape (n_samples, n_components)
+        Initial guess for the solution.
+    H : array-like, shape (n_components, n_features)
+        Initial guess for the solution.
+    L : array-like, shape (n_samples, n_components)
+        Supervision matrix, constrains the importance weights from W.
+    max_iter : integer, default: 200
+        Number of iterations.
+    tol : float, default: 1e-4
+        Tolerance of the stopping condition.
+    update_H : boolean, default: True
+        Set to True, both W and H will be estimated from initial guesses.
+        Set to False, only W will be estimated.
+    verbose : integer, default: 0
+        The verbosity level.
+    Returns
+    -------
+    W : array, shape (n_samples, n_components)
+        Solution to the non-negative least squares problem.
+    H : array, shape (n_components, n_features)
+        Solution to the non-negative least squares problem.
+    n_iter : int
+        The number of iterations done by the algorithm.
+    """
     start_time = time.time()
     error_at_init = _beta_divergence(X, W, H, L, square_root=True)
     previous_error = error_at_init
@@ -291,6 +423,7 @@ def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
         delta_W, HHt, XHt= _multiplicative_update_w(
                             X, W, H, L, HHt, XHt, update_H)
         W *= delta_W
+
         # update H
         if update_H:
             delta_H = _multiplicative_update_h(X, W, H, L)
@@ -314,8 +447,10 @@ def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
 
 def _multiplicative_update_w(X, W, H, L,  HHt=None,
                             XHt=None, update_H=True):
-
-    # assuming Frobenius norm
+    """
+    Update W in Multiplicative Update TS-NMF
+    assuming Frobenius norm
+    """
     # Numerator
     if XHt is None:
         XHt = safe_sparse_dot(X,H.T)
@@ -333,12 +468,14 @@ def _multiplicative_update_w(X, W, H, L,  HHt=None,
     denominator *= L
     denominator[denominator == 0] = EPSILON
     numerator /= denominator
-    delta_W = numerator #np.nan_to_num(numerator)
+    delta_W = numerator
     return delta_W, HHt, XHt
 
 def _multiplicative_update_h(X, W, H, L):
-
-    # Assuming Frobenius norm
+    """
+    Update H in Multiplicative Update TS-NMF
+    assuming Frobenius norm
+    """
 
     # Numerator
     WoL = W*L
@@ -353,6 +490,22 @@ def _multiplicative_update_h(X, W, H, L):
     return delta_H
 
 def _beta_divergence(X, W, H, L, square_root=False):
+    """Compute the beta-divergence of X and dot(W, H).
+    Parameters
+    ----------
+    X : float or array-like, shape (n_samples, n_features)
+    W : float or dense array-like, shape (n_samples, n_components)
+    H : float or dense array-like, shape (n_components, n_features)
+    L : dense array-like, shape (n_samples, n_components)
+   
+    square_root : boolean, default False
+        If True, return np.sqrt(2 * res)
+        
+    Returns
+    -------
+        res : float
+            Beta divergence of X and np.dot(X, H)
+    """
     if not sp.issparse(X):
         X = np.atleast_2d(X)
     W = np.atleast_2d(W)
