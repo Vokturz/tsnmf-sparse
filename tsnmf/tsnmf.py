@@ -415,7 +415,7 @@ def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
         The number of iterations done by the algorithm.
     """
     start_time = time.time()
-    error_at_init = _beta_divergence(X, W, H, L, square_root=True)
+    error_at_init = _beta_divergence(X, W, H, square_root=True)
     previous_error = error_at_init
     HHt, XHt, = None, None
     for n_iter in range(1,max_iter + 1):
@@ -432,7 +432,7 @@ def _fit_multiplicative_update(X, W, H, L, max_iter=200, tol=1e-4,
             HHt, XHt = None, None
         
         if tol > 0: #and n_iter % 10 == 0:
-            error = _beta_divergence(X, W, H, L, square_root=True)
+            error = _beta_divergence(X, W, H, square_root=True)
 
             if verbose:
                 iter_time = time.time()
@@ -489,14 +489,13 @@ def _multiplicative_update_h(X, W, H, L):
     delta_H = numerator
     return delta_H
 
-def _beta_divergence(X, W, H, L, square_root=False):
+def _beta_divergence(X, W, H, square_root=False):
     """Compute the beta-divergence of X and dot(W, H).
     Parameters
     ----------
     X : float or array-like, shape (n_samples, n_features)
     W : float or dense array-like, shape (n_samples, n_components)
     H : float or dense array-like, shape (n_components, n_features)
-    L : dense array-like, shape (n_samples, n_components)
    
     square_root : boolean, default False
         If True, return np.sqrt(2 * res)
