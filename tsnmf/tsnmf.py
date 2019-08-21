@@ -514,13 +514,11 @@ def _beta_divergence(X, W, H, L, square_root=False):
     # Avoid the creation of the dense np.dot(W, H) if X is sparse.
     if sp.issparse(X):
         norm_X = np.dot(X.data, X.data)
-        WoL = W*L
-        norm_WoLH = trace_dot(np.dot(np.dot(WoL.T,WoL),H),H)
-        cross_prod = trace_dot((X * H.T), WoL)
-        res = (norm_X + norm_WoLH - 2. * cross_prod) / 2
+        norm_WH = trace_dot(np.dot(np.dot(W.T,W), H), H)
+        cross_prod = trace_dot((X * H.T), W)
+        res = (norm_X + norm_WH - 2. * cross_prod) / 2
     else:
-        WoL = W*L
-        res = squared_norm(X- np.dot(WoL,H)) / 2
+        res = squared_norm(X - np.dot(W,H)) / 2
     
     if square_root:
         return np.sqrt(res * 2)
