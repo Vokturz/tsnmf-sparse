@@ -14,8 +14,17 @@ Then, for a term-document matrix *V* and supervision matrix *L*, TS-NMF seeks ma
 Where ○ represent the Hadamard (element-wise) product operator.
 
 ## Installation
-(Package or download dir?)
+You can install TS-NMF via pip:
 
+```python
+pip install tsnmf
+```
+
+Or clonning this repository and running `setup.py`:
+
+```python
+python setup.py install
+```
 ## Usage
 TS-NMF is used in a similar way as the module `decomposition.NMF` from Scikit-Learn. The extra thing that you need is a `list of list` that contains the labels to build the matrix *L*.
 
