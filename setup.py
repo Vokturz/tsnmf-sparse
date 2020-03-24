@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="tsnmf", # Replace with your own username
-    version="1.0",
+    version="1.0.4",
     author="Victor Navarro & Eduardo Graells",
     author_email="victor.navarro@ug.uchile.cl",
     description="Implementation of Topic-Supervised Non-Negative Matrix Factorization",
