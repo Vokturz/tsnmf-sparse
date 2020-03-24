@@ -360,7 +360,7 @@ def topic_supervised_factorization(X, W=None, H=None, n_components=None,
 
         # override W or H if supplied
         if W is not None:
-            _check_init(W, (n_features, n_components), "NMF (input W)")
+            _check_init(W, (n_samples, n_components), "NMF (input W)")
         else:
             W = W_init
 
